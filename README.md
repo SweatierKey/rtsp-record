@@ -4,6 +4,10 @@ Record an RTSP stream to disk in fixed-duration segments. Wraps
 [`ffmpeg`](https://ffmpeg.org)'s segment muxer with `-c copy` (no re-encode,
 preserves the camera's bitrate and CPU on the host).
 
+## Demo
+
+[![asciicast](https://asciinema.org/a/8LEaWhV5O7VHgv5z.svg)](https://asciinema.org/a/8LEaWhV5O7VHgv5z)
+
 ## Install
 
     chmod +x rtsp-record

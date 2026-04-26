@@ -1,0 +1,283 @@
+#!/usr/bin/env python3
+"""rtsp-record: record an RTSP stream to disk in fixed-duration segments.
+
+Wraps ffmpeg's segment muxer with `-c copy` (no re-encode) and strftime-named
+output files. Stdout is left empty — this script is a sink, not a producer.
+"""
+
+import argparse
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import threading
+from typing import List, Optional
+from urllib.parse import urlparse
+
+VERSION = "1.0.0"
+PROG = "rtsp-record"
+
+EXIT_OK = 0
+EXIT_USAGE = 1
+EXIT_PROTOCOL = 4
+EXIT_INTERRUPT = 130
+
+TRANSPORTS = ("tcp", "udp")
+
+# ffmpeg's segment muxer logs each new file as it opens it, e.g.
+#   [segment @ 0x55a4e0d6c2c0] Opening 'recording-...mp4' for writing
+# We match the broader form so the regex still works if the muxer prefix
+# changes between ffmpeg versions.
+_OPEN_RE = re.compile(r"Opening '([^']+)' for writing")
+
+# Detect at least one strftime conversion specifier so the output pattern
+# yields unique file names per segment.
+_STRFTIME_RE = re.compile(r"%[A-Za-z]")
+
+
+class _Err(Exception):
+    def __init__(self, code: int, msg: str):
+        super().__init__(msg)
+        self.code = code
+        self.msg = msg
+
+
+def log(verbose: bool, msg: str) -> None:
+    if verbose:
+        print(f"{PROG}: {msg}", file=sys.stderr)
+
+
+def err(msg: str) -> None:
+    print(f"{PROG}: {msg}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+def _validate_pattern(pattern: str) -> None:
+    if not _STRFTIME_RE.search(pattern):
+        raise _Err(
+            EXIT_USAGE,
+            "output pattern must contain a strftime placeholder "
+            "(e.g. %Y%m%d-%H%M%S)",
+        )
+    parent = os.path.dirname(pattern)
+    if parent and not os.path.isdir(parent):
+        raise _Err(EXIT_USAGE, f"output directory does not exist: {parent}")
+
+
+def _validate_url(url: str) -> None:
+    p = urlparse(url)
+    if p.scheme not in ("rtsp", "rtsps") or not p.netloc:
+        raise _Err(EXIT_USAGE, f"not an RTSP URL: {url}")
+
+
+def _check_dependencies() -> None:
+    if not shutil.which("ffmpeg"):
+        err("ffmpeg not found in PATH (install with: apt install ffmpeg)")
+        sys.exit(EXIT_USAGE)
+
+
+# ---------------------------------------------------------------------------
+# Command builder (pure)
+# ---------------------------------------------------------------------------
+
+def build_ffmpeg_cmd(url: str, transport: str, duration: int,
+                     pattern: str) -> List[str]:
+    return [
+        "ffmpeg",
+        "-hide_banner",
+        "-nostdin",
+        "-rtsp_transport", transport,
+        "-i", url,
+        "-c", "copy",
+        "-map", "0",
+        "-f", "segment",
+        "-segment_time", str(duration),
+        "-strftime", "1",
+        "-reset_timestamps", "1",
+        pattern,
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Recording (the actual subprocess + stderr-parsing dance)
+# ---------------------------------------------------------------------------
+
+def record(url: str, transport: str, duration: int, pattern: str,
+           max_segments: int, verbose: bool) -> int:
+    cmd = build_ffmpeg_cmd(url, transport, duration, pattern)
+    log(verbose, "exec: " + " ".join(cmd))
+
+    proc = subprocess.Popen(
+        cmd, stdin=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        bufsize=1, universal_newlines=True,
+    )
+
+    state = {
+        "count": 0,
+        "stopped_by_max": False,
+        "last_line": "",
+    }
+    state_lock = threading.Lock()
+
+    def _on_segment_open(name: str) -> None:
+        with state_lock:
+            state["count"] += 1
+            cnt = state["count"]
+        log(verbose, f"segment {cnt}: {name}")
+        if max_segments > 0 and cnt > max_segments:
+            with state_lock:
+                already = state["stopped_by_max"]
+                state["stopped_by_max"] = True
+            if not already:
+                log(verbose,
+                    f"reached --max-segments {max_segments}, stopping ffmpeg")
+                try:
+                    proc.send_signal(signal.SIGINT)
+                except ProcessLookupError:
+                    pass
+
+    def _reader() -> None:
+        assert proc.stderr is not None
+        for raw in proc.stderr:
+            line = raw.rstrip()
+            if not line:
+                continue
+            with state_lock:
+                state["last_line"] = line
+            m = _OPEN_RE.search(line)
+            if m:
+                _on_segment_open(m.group(1))
+                continue
+            if verbose:
+                print(line, file=sys.stderr, flush=True)
+
+    reader_thread = threading.Thread(target=_reader, daemon=True)
+    reader_thread.start()
+
+    try:
+        rc = proc.wait()
+    except KeyboardInterrupt:
+        # Forward SIGINT so ffmpeg flushes the trailing segment cleanly.
+        try:
+            proc.send_signal(signal.SIGINT)
+        except ProcessLookupError:
+            pass
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        reader_thread.join(timeout=2)
+        err("interrupted")
+        return EXIT_INTERRUPT
+
+    reader_thread.join(timeout=2)
+
+    if state["stopped_by_max"]:
+        # We asked ffmpeg to stop — its non-zero rc here is success.
+        return EXIT_OK
+
+    # ffmpeg exited on its own. -2 == killed by SIGINT (e.g. user hit Ctrl-C
+    # before our parent caught KeyboardInterrupt); treat that as interrupt.
+    if rc == -signal.SIGINT or rc == 130:
+        err("interrupted")
+        return EXIT_INTERRUPT
+
+    if rc != 0:
+        err(f"ffmpeg exited with code {rc}: {state['last_line']}")
+        return EXIT_PROTOCOL
+
+    return EXIT_OK
+
+
+# ---------------------------------------------------------------------------
+# CLI plumbing
+# ---------------------------------------------------------------------------
+
+def _read_url_from_stdin() -> Optional[str]:
+    for line in sys.stdin:
+        line = line.strip()
+        if line:
+            return line
+    return None
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog=PROG,
+        description="Record an RTSP stream to disk in fixed-duration segments "
+                    "(no re-encoding).",
+        epilog="If RTSP_URL is omitted, one URL is read from stdin "
+               "(first non-empty line).",
+        add_help=False,
+    )
+    p.add_argument("rtsp_url", nargs="?", metavar="RTSP_URL")
+    p.add_argument("-d", "--duration", type=int, default=600, metavar="SECONDS",
+                   help="duration of each segment in seconds (default: 600)")
+    p.add_argument("-o", "--output", default="recording-%Y%m%d-%H%M%S.mp4",
+                   metavar="PATTERN",
+                   help="output filename pattern with strftime placeholders "
+                        "(default: recording-%%Y%%m%%d-%%H%%M%%S.mp4)")
+    p.add_argument("--transport", choices=TRANSPORTS, default="tcp",
+                   help="RTSP transport (default: tcp)")
+    p.add_argument("--max-segments", type=int, default=0, metavar="N",
+                   help="stop after N segments (default: 0 = run indefinitely)")
+    p.add_argument("-v", "--verbose", action="store_true",
+                   help="log progress and ffmpeg output on stderr")
+    p.add_argument("-V", "--version", action="store_true",
+                   help="print version and exit")
+    p.add_argument("-h", "--help", action="store_true",
+                   help="show this help and exit")
+    return p
+
+
+def main(argv=None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.help:
+        parser.print_help()
+        return EXIT_OK
+    if args.version:
+        print(f"{PROG} {VERSION}")
+        return EXIT_OK
+
+    _check_dependencies()
+
+    try:
+        if args.duration <= 0:
+            raise _Err(EXIT_USAGE, "duration must be > 0")
+        if args.max_segments < 0:
+            raise _Err(EXIT_USAGE, "--max-segments must be >= 0")
+
+        _validate_pattern(args.output)
+
+        url = args.rtsp_url
+        if url is None:
+            if sys.stdin.isatty():
+                raise _Err(EXIT_USAGE, "no RTSP URL given and stdin is a terminal")
+            url = _read_url_from_stdin()
+            if url is None:
+                raise _Err(EXIT_USAGE, "no RTSP URL on stdin")
+        _validate_url(url)
+
+        return record(
+            url, args.transport, args.duration, args.output,
+            args.max_segments, args.verbose,
+        )
+    except _Err as e:
+        err(e.msg)
+        return e.code
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        err("interrupted")
+        sys.exit(EXIT_INTERRUPT)

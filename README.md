@@ -6,7 +6,9 @@ preserves the camera's bitrate and CPU on the host).
 
 ## Demo
 
-[![asciicast](https://asciinema.org/a/8LEaWhV5O7VHgv5z.svg)](https://asciinema.org/a/8LEaWhV5O7VHgv5z)
+![demo](demo.gif)
+
+Watch with pause/seek on [asciinema.org](https://asciinema.org/a/8LEaWhV5O7VHgv5z).
 
 ## Install
 

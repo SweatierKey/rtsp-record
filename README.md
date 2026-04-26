@@ -35,7 +35,7 @@ Record exactly 6 segments (1 hour at the default duration) then stop:
 |---|---|---|
 | `RTSP_URL` (positional) | from stdin | RTSP URL (`rtsp://` or `rtsps://`) |
 | `-d`, `--duration SECONDS` | `600` | length of each segment, in seconds |
-| `-o`, `--output PATTERN` | `recording-%Y%m%d-%H%M%S.mp4` | output filename pattern; **must contain at least one strftime placeholder** so segments do not overwrite each other |
+| `-o`, `--output PATTERN` | `recording-%Y-%m-%d_%H-%M-%S.mp4` | output filename pattern; **must contain at least one strftime placeholder** so segments do not overwrite each other |
 | `--transport {tcp,udp}` | `tcp` | RTSP transport |
 | `--max-segments N` | `0` | stop after N completed segments; `0` = run until interrupted |
 | `-v`, `--verbose` | off | log progress and ffmpeg's stderr (filtered to segment-rotation lines plus everything else when `-v`) |

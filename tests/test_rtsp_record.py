@@ -127,24 +127,24 @@ def _run(args, env=None, stdin_text=None, cwd=None, timeout=15):
 class ValidatePatternTests(unittest.TestCase):
     def test_strftime_present_ok(self):
         with tempfile.TemporaryDirectory() as d:
-            rr._validate_pattern(os.path.join(d, "rec-%Y%m%d.mp4"))
+            rr._validate_pattern(os.path.join(d, "rec-%Y%m%d.mkv"))
 
     def test_no_strftime_rejected(self):
         with self.assertRaises(rr._Err) as cm:
-            rr._validate_pattern("rec.mp4")
+            rr._validate_pattern("rec.mkv")
         self.assertEqual(cm.exception.code, 1)
         self.assertIn("strftime placeholder", cm.exception.msg)
 
     def test_missing_dir_rejected(self):
         with self.assertRaises(rr._Err) as cm:
-            rr._validate_pattern("/no/such/dir/rec-%Y.mp4")
+            rr._validate_pattern("/no/such/dir/rec-%Y.mkv")
         self.assertEqual(cm.exception.code, 1)
         self.assertIn("output directory does not exist", cm.exception.msg)
 
 
 class BuildCmdTests(unittest.TestCase):
     def test_flags_present_in_order(self):
-        cmd = rr.build_ffmpeg_cmd("rtsp://x/y", "tcp", 600, "out-%Y.mp4")
+        cmd = rr.build_ffmpeg_cmd("rtsp://x/y", "tcp", 600, "out-%Y.mkv")
         self.assertEqual(cmd[0], "ffmpeg")
         # Critical contract pieces:
         self.assertIn("-rtsp_transport", cmd)
@@ -157,7 +157,7 @@ class BuildCmdTests(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("-reset_timestamps") + 1], "1")
         # The pattern must be the very last argument so ffmpeg parses it as
         # the output URL.
-        self.assertEqual(cmd[-1], "out-%Y.mp4")
+        self.assertEqual(cmd[-1], "out-%Y.mkv")
 
 
 # ---------------------------------------------------------------------------
@@ -166,12 +166,12 @@ class BuildCmdTests(unittest.TestCase):
 
 class UsageErrorTests(unittest.TestCase):
     def test_pattern_without_placeholder(self):
-        r = _run(["-o", "rec.mp4", "rtsp://x/y"])
+        r = _run(["-o", "rec.mkv", "rtsp://x/y"])
         self.assertEqual(r.returncode, 1)
         self.assertIn("strftime placeholder", r.stderr)
 
     def test_missing_output_directory(self):
-        r = _run(["-o", "/nonexistent-dir-xyz/rec-%Y.mp4", "rtsp://x/y"])
+        r = _run(["-o", "/nonexistent-dir-xyz/rec-%Y.mkv", "rtsp://x/y"])
         self.assertEqual(r.returncode, 1)
         self.assertIn("output directory does not exist", r.stderr)
 
@@ -207,7 +207,7 @@ class UsageErrorTests(unittest.TestCase):
 class IntegrationTests(unittest.TestCase):
     def test_max_segments_stops_recording(self):
         with _FakeFfmpegPath() as fp, tempfile.TemporaryDirectory() as d:
-            pattern = os.path.join(d, "rec-%Y%m%d-%H%M%S.mp4")
+            pattern = os.path.join(d, "rec-%Y%m%d-%H%M%S.mkv")
             r = _run(
                 ["-o", pattern, "--max-segments", "2", "-d", "1",
                  "rtsp://x/y"],
@@ -223,7 +223,7 @@ class IntegrationTests(unittest.TestCase):
 
     def test_verbose_logs_segments(self):
         with _FakeFfmpegPath() as fp, tempfile.TemporaryDirectory() as d:
-            pattern = os.path.join(d, "rec-%Y%m%d-%H%M%S.mp4")
+            pattern = os.path.join(d, "rec-%Y%m%d-%H%M%S.mkv")
             r = _run(
                 ["-v", "-o", pattern, "--max-segments", "1",
                  "rtsp://x/y"],
@@ -234,7 +234,7 @@ class IntegrationTests(unittest.TestCase):
 
     def test_ffmpeg_failure_propagates(self):
         with _FakeFfmpegPath() as fp, tempfile.TemporaryDirectory() as d:
-            pattern = os.path.join(d, "rec-%Y%m%d-%H%M%S.mp4")
+            pattern = os.path.join(d, "rec-%Y%m%d-%H%M%S.mkv")
             r = _run(
                 ["-o", pattern, "rtsp://x/y"],
                 env=fp.env(FAKE_FFMPEG_FAIL_FAST="1", FAKE_FFMPEG_EXIT="3"),
@@ -244,7 +244,7 @@ class IntegrationTests(unittest.TestCase):
 
     def test_url_from_stdin(self):
         with _FakeFfmpegPath() as fp, tempfile.TemporaryDirectory() as d:
-            pattern = os.path.join(d, "rec-%Y%m%d-%H%M%S.mp4")
+            pattern = os.path.join(d, "rec-%Y%m%d-%H%M%S.mkv")
             r = _run(
                 ["-o", pattern, "--max-segments", "1"],
                 env=fp.env(FAKE_FFMPEG_INTERVAL="0.05"),

@@ -16,7 +16,7 @@ import threading
 from typing import List, Optional
 from urllib.parse import urlparse
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 PROG = "rtsp-record"
 
 EXIT_OK = 0
@@ -27,7 +27,7 @@ EXIT_INTERRUPT = 130
 TRANSPORTS = ("tcp", "udp")
 
 # ffmpeg's segment muxer logs each new file as it opens it, e.g.
-#   [segment @ 0x55a4e0d6c2c0] Opening 'recording-...mp4' for writing
+#   [segment @ 0x55a4e0d6c2c0] Opening 'recording-...mkv' for writing
 # We match the broader form so the regex still works if the muxer prefix
 # changes between ffmpeg versions.
 _OPEN_RE = re.compile(r"Opening '([^']+)' for writing")
@@ -219,10 +219,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("rtsp_url", nargs="?", metavar="RTSP_URL")
     p.add_argument("-d", "--duration", type=int, default=600, metavar="SECONDS",
                    help="duration of each segment in seconds (default: 600)")
-    p.add_argument("-o", "--output", default="recording-%Y-%m-%d_%H-%M-%S.mp4",
+    p.add_argument("-o", "--output", default="recording-%Y-%m-%d_%H-%M-%S.mkv",
                    metavar="PATTERN",
                    help="output filename pattern with strftime placeholders "
-                        "(default: recording-%%Y-%%m-%%d_%%H-%%M-%%S.mp4)")
+                        "(default: recording-%%Y-%%m-%%d_%%H-%%M-%%S.mkv)")
     p.add_argument("--transport", choices=TRANSPORTS, default="tcp",
                    help="RTSP transport (default: tcp)")
     p.add_argument("--max-segments", type=int, default=0, metavar="N",

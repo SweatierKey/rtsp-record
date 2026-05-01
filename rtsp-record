@@ -16,7 +16,7 @@ import threading
 from typing import List, Optional
 from urllib.parse import urlparse
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 PROG = "rtsp-record"
 
 EXIT_OK = 0
@@ -64,9 +64,11 @@ def _validate_pattern(pattern: str) -> None:
             "output pattern must contain a strftime placeholder "
             "(e.g. %Y%m%d-%H%M%S)",
         )
-    parent = os.path.dirname(pattern)
-    if parent and not os.path.isdir(parent):
+    parent = os.path.dirname(pattern) or "."
+    if not os.path.isdir(parent):
         raise _Err(EXIT_USAGE, f"output directory does not exist: {parent}")
+    if not os.access(parent, os.W_OK):
+        raise _Err(EXIT_USAGE, f"output directory not writable: {parent}")
 
 
 def _validate_url(url: str) -> None:
@@ -275,7 +277,21 @@ def main(argv=None) -> int:
         return e.code
 
 
+def _install_sigterm_handler() -> None:
+    """Translate SIGTERM into KeyboardInterrupt so the existing graceful
+    shutdown path runs (forward SIGINT to ffmpeg, finalise the segment).
+
+    systemd's default KillSignal is SIGTERM; without this, the script would
+    die immediately and the in-flight segment would be left incomplete.
+    Matroska is forgiving about that, but cleaner is cleaner.
+    """
+    def _on_sigterm(_sig, _frame):
+        raise KeyboardInterrupt()
+    signal.signal(signal.SIGTERM, _on_sigterm)
+
+
 if __name__ == "__main__":
+    _install_sigterm_handler()
     try:
         sys.exit(main())
     except KeyboardInterrupt:

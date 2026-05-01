@@ -141,6 +141,21 @@ class ValidatePatternTests(unittest.TestCase):
         self.assertEqual(cm.exception.code, 1)
         self.assertIn("output directory does not exist", cm.exception.msg)
 
+    def test_unwritable_dir_rejected(self):
+        # Skip on root: root can write into any dir regardless of mode bits.
+        if os.geteuid() == 0:
+            self.skipTest("running as root — write check bypassed")
+        with tempfile.TemporaryDirectory() as d:
+            os.chmod(d, 0o555)
+            try:
+                with self.assertRaises(rr._Err) as cm:
+                    rr._validate_pattern(os.path.join(d, "rec-%Y.mkv"))
+                self.assertEqual(cm.exception.code, 1)
+                self.assertIn("not writable", cm.exception.msg)
+            finally:
+                # Restore so TemporaryDirectory can clean itself up.
+                os.chmod(d, 0o755)
+
 
 class BuildCmdTests(unittest.TestCase):
     def test_flags_present_in_order(self):

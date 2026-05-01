@@ -92,6 +92,12 @@ def build_ffmpeg_cmd(url: str, transport: str, duration: int,
     return [
         "ffmpeg",
         "-hide_banner",
+        # -nostats: suppress the running 'frame= X fps= Y' progress line.
+        # Without this, verbose mode (or any stderr-forwarding wrapper like
+        # nvrd 1.3.0) gets flooded with one line every ~100 ms, drowning
+        # out actual events. Segment-open notices and warnings still go
+        # through because they're logged at AV_LOG_INFO/WARNING.
+        "-nostats",
         "-nostdin",
         "-rtsp_transport", transport,
         "-i", url,
